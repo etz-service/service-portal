@@ -1456,6 +1456,8 @@ function printIntakeReceipt(r){
 /* שליחת אישור קליטה ללקוח בוואטסאפ — מייצר תמונת PNG (נפתחת נכון בכל מקום) */
 async function sendIntakeWhatsapp(r,btn){
   const orig=btn.innerHTML; btn.disabled=true; btn.innerHTML='<span class="spinner"></span>';
+  // פתיחת חלון מיד עם הלחיצה — אחרת Safari חוסם אחרי ה-await
+  const win=window.open('','_blank');
   try{
     const blob=await renderIntakePNG(r);
     let url=null;
@@ -1475,9 +1477,10 @@ async function sendIntakeWhatsapp(r,btn){
     }
     if(!url) throw new Error('no url');
     const msg=`שלום ${r.customers?.full_name||''}, קיבלנו את הכלי ${toolLabel(r)} (קריאה ${r.request_no}). מצורף אישור קליטה:\n${url}`;
-    window.open(waLink(r,msg),'_blank');
-    toast('אישור הקליטה מוכן לשליחה','ok');
-  }catch(err){ toast('שגיאה בהכנת האישור — נסה שוב','err'); }
+    const wa=waLink(r,msg);
+    if(win && !win.closed){ win.location.href=wa; } else { window.open(wa,'_blank'); }
+    toast('אישור הקליטה נשלח לוואטסאפ','ok');
+  }catch(err){ if(win && !win.closed)win.close(); toast('שגיאה בהכנת האישור — נסה שוב','err'); }
   btn.disabled=false; btn.innerHTML=orig;
 }
 
