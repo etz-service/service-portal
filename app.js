@@ -68,6 +68,11 @@ const STAGES = [
   ['delivered_closed','נמסר ללקוח ונסגר'],
 ];
 const STAGE_LABEL = Object.fromEntries(STAGES);
+/* תוויות גיבוי לסטטוסים ישנים שהוסרו — שלא יופיעו באנגלית בקריאות ישנות */
+STAGE_LABEL.in_repair = STAGE_LABEL.in_repair || 'בטיפול';
+STAGE_LABEL.in_transit_to_store = STAGE_LABEL.in_transit_to_store || 'בדרך לחנות';
+STAGE_LABEL.ready_for_pickup = STAGE_LABEL.ready_for_pickup || 'מוכן לאיסוף';
+function stageLabel(s){ return STAGE_LABEL[s] || s || '—'; }
 /* סטטוס קצר לתגים במובייל */
 const STAGE_SHORT = {
   draft:'טיוטה', awaiting_approval:'ממתין לאישור', opened:'לשליחה', at_supplier:'נשלח לספק',
@@ -108,7 +113,7 @@ function esc(s){return (s??'').toString().replace(/[&<>"']/g,c=>({'&':'&amp;','<
 function fmtDate(d){if(!d)return '—';const x=new Date(d);return x.toLocaleDateString('he-IL')+' '+x.toLocaleTimeString('he-IL',{hour:'2-digit',minute:'2-digit'});}
 function fmtDay(d){if(!d)return '—';return new Date(d).toLocaleDateString('he-IL');}
 function daysBetween(a,b){return Math.max(0,Math.round((new Date(b)-new Date(a))/86400000));}
-function pill(stage){const l=STAGE_LABEL[stage]||stage;return `<span class="pill s-${stage}"><span class="dot"></span>${esc(l)}</span>`;}
+function pill(stage){return `<span class="pill s-${stage}"><span class="dot"></span>${esc(stageLabel(stage))}</span>`;}
 function toast(msg,type=''){const t=el(`<div class="toast ${type}">${esc(msg)}</div>`);$('#toasts').appendChild(t);
   setTimeout(()=>{t.classList.add('out');setTimeout(()=>t.remove(),260);},3200);}
 const isAdmin = ()=>State.profile?.role==='super_admin';
@@ -198,6 +203,7 @@ async function afterLogin(user){
   sb.from('profiles').update({last_login_at:new Date().toISOString()}).eq('id',user.id).then(()=>{});
   if(!location.hash) location.hash = isAdmin()?'#/dash':'#/dash';
   renderShell(); route();
+  subscribeRealtime();
   // טעינה מקדימה ברקע — הניווט הבא יהיה מיידי
   loadRequests({}).catch(()=>{});
 }
@@ -229,7 +235,7 @@ function renderLogin(){
   $('#lg-pass').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
 }
 
-async function logout(){ await sb.auth.signOut(); location.hash=''; renderLogin(); }
+async function logout(){ try{ if(_rtChannel){sb.removeChannel(_rtChannel);_rtChannel=null;} }catch(e){} await sb.auth.signOut(); location.hash=''; renderLogin(); }
 
 /* ============================================================
    מעטפת (sidebar + ניתוב)
@@ -351,6 +357,40 @@ function animatePage(dir){
 
 window.addEventListener('hashchange',route);
 let _routeToken=0;
+/* נקודת רענון של המסך הנוכחי — כל מסך מגדיר אותה לעצמו (שומר על פילטרים) */
+let _liveRefresh=null;
+
+/* ---------- עדכונים בזמן אמת (Realtime) ----------
+   מנוי לשינויים בטבלאות. כל שינוי שמשתמש אחד מבצע מופיע מיד אצל כולם. */
+let _rtChannel=null, _rtTimer=null;
+function subscribeRealtime(){
+  try{
+    if(_rtChannel){ sb.removeChannel(_rtChannel); _rtChannel=null; }
+    _rtChannel = sb.channel('rt-portal')
+      .on('postgres_changes',{event:'*',schema:'public',table:'service_requests'}, p=>onRealtime(p))
+      .on('postgres_changes',{event:'*',schema:'public',table:'comments'}, p=>onRealtime(p))
+      .on('postgres_changes',{event:'*',schema:'public',table:'status_history'}, p=>onRealtime(p))
+      .subscribe();
+  }catch(e){ console.warn('realtime off',e); }
+}
+function onRealtime(payload){
+  invalidateReqCache();
+  clearTimeout(_rtTimer);
+  _rtTimer=setTimeout(async ()=>{
+    await fetchRequests().catch(()=>{});
+    const hash=location.hash||'';
+    const m=hash.match(/#\/requests\/id\/(.+)$/);
+    if(m){
+      // בעמוד פרטי קריאה — רענן רק אם לא מקלידים הערה כרגע
+      const box=document.getElementById('c-body');
+      if(box && box.value.trim().length>0) return;
+      const chId=(payload.new&&(payload.new.id||payload.new.request_id))||(payload.old&&(payload.old.id||payload.old.request_id));
+      if(chId===m[1]) viewRequestDetail(m[1]);
+    } else if(typeof _liveRefresh==='function'){
+      _liveRefresh(); // רשימות/דאשבורד — רענון ששומר על פילטרים
+    }
+  }, 400);
+}
 /* רינדור מיידי מהמטמון + רענון שקט ברקע (stale-while-revalidate) */
 function dataView(build){
   const token=_routeToken;
@@ -358,10 +398,13 @@ function dataView(build){
   if(cache) build(cache);                 // הצגה מיידית
   const stale=!cache || (Date.now()-_reqMemoTime>=15000);
   if(stale) fetchRequests().then(fresh=>{ if(token===_routeToken) build(fresh); });
+  // רענון חי: כשמגיע עדכון Realtime, מרנדר מחדש עם הנתונים הטריים
+  _liveRefresh=()=>{ if(token===_routeToken) build(cachedRequests()||[]); };
 }
 function route(){
   if(!State.profile)return;
   _routeToken++;
+  _liveRefresh=null;
   const hash=location.hash||'#/dash';
   const [path,arg]=hash.split('/id/');
   setActiveNav(path);
@@ -489,6 +532,7 @@ async function stageListView(title,sub,stages,showQuick,withStoreFilter,note){
     const cnt=$('#sl-count'); if(cnt)cnt.textContent=list.length+' קריאות';
   }
   dataView(paint);
+  _liveRefresh=()=>{ if(document.getElementById('sl-holder')) paint(cachedRequests()||[]); };
 }
 /* ============================================================
    מנוע מטמון מהיר — stale-while-revalidate
@@ -577,6 +621,7 @@ async function requestsList(){
     _onSelChange();
   }
   dataView(apply);              // רינדור מיידי + רענון ברקע
+  _liveRefresh=()=>{ if(document.getElementById('req-holder')) apply(); };
   $('#q').addEventListener('input',debounce(apply,180));
   $('#f-stage').onchange=apply; $('#f-open').onchange=apply;
   $('#f-clear').onclick=()=>{$('#q').value='';$('#f-stage').value='';$('#f-open').value='';if($('#f-store'))$('#f-store').value='';apply();};
@@ -1193,7 +1238,7 @@ function editRepairModal(r,rd){
       warranty_decision:f.warranty_decision||null,rejection_reason:f.rejection_reason||null,replacement_tool_no:f.replacement_tool_no||null};
     const {error}=await sb.from('repair_details').upsert(payload,{onConflict:'request_id'});
     if(error){toast('שגיאה: '+error.message,'err');return;}
-    await sb.from('audit_log').insert({actor_id:State.profile.id,store_id:r.store_id,entity:'repair_details',entity_id:r.id,action:'update'});
+    sb.from('audit_log').insert({actor_id:State.profile.id,store_id:r.store_id,entity:'repair_details',entity_id:r.id,action:'update'}).then(()=>{});
     toast('פרטי הטיפול נשמרו','ok');m.close();viewRequestDetail(r.id);
   };
 }
@@ -1226,7 +1271,7 @@ function commentsPanel(r,comments){
 }
 
 function timelinePanel(hist){
-  const items=hist.map(h=>`<div class="tl-item"><div>${h.from_stage?esc(STAGE_LABEL[h.from_stage])+' ← ':''}<b>${esc(STAGE_LABEL[h.to_stage]||h.to_stage)}</b></div>
+  const items=hist.map(h=>`<div class="tl-item"><div>${h.from_stage?esc(stageLabel(h.from_stage))+' ← ':''}<b>${esc(stageLabel(h.to_stage))}</b></div>
     <div class="t">${fmtDate(h.created_at)} · ${esc(h.profiles?.full_name||'מערכת')}</div>
     ${h.note?`<div class="small">${esc(h.note)}</div>`:''}</div>`).join('')||'<div class="small muted" style="padding:6px 0 4px">אין היסטוריה</div>';
   return el(`<div class="card" style="min-width:0"><div class="card-h">ציר זמן</div><div class="pad"><div class="timeline">${items}</div></div></div>`);
@@ -1319,8 +1364,9 @@ function deliveryFlow(r){
       }catch(e){ console.error('receipt png',e); }
       await sb.from('service_requests').update({stage:'delivered_closed'}).eq('id',r.id);
       invalidateReqCache();
-      await sb.from('status_history').insert({request_id:r.id,store_id:r.store_id,from_stage:r.stage,to_stage:'delivered_closed',note:'נמסר ללקוח: '+f.collector_name,changed_by:State.profile.id});
-      await sb.from('audit_log').insert({actor_id:State.profile.id,store_id:r.store_id,entity:'delivery',entity_id:r.id,action:'delivery',details:{collector:f.collector_name}});
+      // יומן והיסטוריה — לא חוסמים; גם אם ייכשלו, המסירה כבר הושלמה
+      sb.from('status_history').insert({request_id:r.id,store_id:r.store_id,from_stage:r.stage,to_stage:'delivered_closed',note:'נמסר ללקוח: '+f.collector_name,changed_by:State.profile.id}).then(()=>{});
+      sb.from('audit_log').insert({actor_id:State.profile.id,store_id:r.store_id,entity:'delivery',entity_id:r.id,action:'delivery',details:{collector:f.collector_name}}).then(()=>{});
       m.close();
       printDeliveryReceipt(r,f,signedText,sig.dataURL());
       toast('המסירה נשמרה והאישור נשמר בקבצים','ok');viewRequestDetail(r.id);
