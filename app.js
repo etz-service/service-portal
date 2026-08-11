@@ -1246,16 +1246,15 @@ function editRepairModal(r,rd){
 function commentsPanel(r,comments){
   const admin=isAdmin();
   const visible=comments.filter(c=>admin||!c.is_internal);
-  const list=visible.map(c=>`<div style="padding:12px 0;border-bottom:1px solid var(--hairline)">
-    <div class="row spread" style="margin-bottom:3px"><b>${esc(c.profiles?.full_name||'משתמש')}</b>
-    <span class="small muted">${fmtDate(c.created_at)}</span></div>
-    <div>${esc(c.body)} ${c.is_internal?'<span class="chip" style="background:var(--danger-soft);border-color:#f0c0c0;color:#a13030">פנימי</span>':''}</div></div>`).join('')
-    || '<div class="small muted" style="padding:6px 0 4px">אין הערות עדיין</div>';
+  const list=visible.map(c=>`<div class="comment-item">
+    <div class="comment-head"><b>${esc(c.profiles?.full_name||'משתמש')}</b><span class="small muted">${fmtDate(c.created_at)}</span>${c.is_internal?'<span class="chip chip-internal">פנימי</span>':''}</div>
+    <div class="comment-body">${esc(c.body)}</div></div>`).join('')
+    || '<div class="small muted" style="padding:4px 0 8px">אין הערות עדיין</div>';
   const p=el(`<div class="card" style="min-width:0"><div class="card-h">הערות ותקשורת</div>
     <div class="pad"><div id="c-list">${list}</div>
-      <div style="margin-top:16px">
+      <div style="margin-top:14px">
         <textarea class="textarea" id="c-body" placeholder="כתיבת הערה..."></textarea>
-        ${admin?'<label class="row small" style="margin:10px 0;gap:7px"><input type="checkbox" id="c-internal"> הערה פנימית (לספק בלבד)</label>':'<div style="height:10px"></div>'}
+        ${admin?'<label class="internal-check"><input type="checkbox" id="c-internal"><span>הערה פנימית (לספק בלבד)</span></label>':'<div style="height:12px"></div>'}
         <button class="btn primary block" id="c-send">שליחת הערה</button>
       </div></div></div>`);
   p.querySelector('#c-send').onclick=async()=>{
@@ -1459,16 +1458,26 @@ async function sendIntakeWhatsapp(r,btn){
   const orig=btn.innerHTML; btn.disabled=true; btn.innerHTML='<span class="spinner"></span>';
   try{
     const blob=await renderIntakePNG(r);
-    const path=`${r.store_id}/${r.id}/intake_${Date.now()}.png`;
-    // ל-bucket ציבורי (קישור קצר, בלי טוקן ענק)
-    const {error:eU}=await sb.storage.from(RECEIPTS_BUCKET).upload(path,blob,{contentType:'image/png',upsert:true});
-    if(eU)throw eU;
-    sb.from('attachments').insert({request_id:r.id,store_id:r.store_id,storage_path:'receipts:'+path,file_name:`אישור קליטה ${r.request_no}.png`,mime_type:'image/png',uploaded_by:State.profile.id}).then(()=>{});
-    const {data:pub}=sb.storage.from(RECEIPTS_BUCKET).getPublicUrl(path);
-    const msg=`שלום ${r.customers?.full_name||''}, קיבלנו את הכלי ${toolLabel(r)} (קריאה ${r.request_no}). מצורף אישור קליטה:\n${pub.publicUrl}`;
+    let url=null;
+    // ניסיון 1: bucket ציבורי — קישור קצר
+    try{
+      const path=`${r.store_id}/${r.id}/intake_${Date.now()}.png`;
+      const {error}=await sb.storage.from(RECEIPTS_BUCKET).upload(path,blob,{contentType:'image/png',upsert:true});
+      if(!error){ url=sb.storage.from(RECEIPTS_BUCKET).getPublicUrl(path).data.publicUrl; }
+    }catch(e){ /* נמשיך לגיבוי */ }
+    // ניסיון 2 (גיבוי): bucket פרטי + קישור חתום — תמיד עובד
+    if(!url){
+      const path=`${r.store_id}/${r.id}/intake_${Date.now()}.png`;
+      const {error}=await sb.storage.from(STORAGE_BUCKET).upload(path,blob,{contentType:'image/png',upsert:true});
+      if(error) throw error;
+      const {data}=await sb.storage.from(STORAGE_BUCKET).createSignedUrl(path,60*60*24*365);
+      url=data?.signedUrl;
+    }
+    if(!url) throw new Error('no url');
+    const msg=`שלום ${r.customers?.full_name||''}, קיבלנו את הכלי ${toolLabel(r)} (קריאה ${r.request_no}). מצורף אישור קליטה:\n${url}`;
     window.open(waLink(r,msg),'_blank');
     toast('אישור הקליטה מוכן לשליחה','ok');
-  }catch(err){ toast('שגיאה: '+(err.message||err),'err'); }
+  }catch(err){ toast('שגיאה בהכנת האישור — נסה שוב','err'); }
   btn.disabled=false; btn.innerHTML=orig;
 }
 
