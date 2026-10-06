@@ -311,6 +311,7 @@ function renderShell(){
       <nav class="nav">${nav}</nav>
       <div class="side-foot"><div class="who">${who}</div><div class="role">${role}</div>
         <button class="btn sm block push-btn" style="margin-bottom:8px;display:none">${icon('phone',15)} הפעל התראות</button>
+        <button class="btn sm block pushtest-btn" style="margin-bottom:8px;display:none">בדיקת התראה</button>
         <button class="btn sm block" id="logout-btn">${icon('logout',15)} התנתקות</button></div>
     </aside>
     <div class="main">
@@ -326,12 +327,15 @@ function renderShell(){
         <nav class="nav">${nav}</nav>
         <div class="side-foot"><div class="who">${who}</div><div class="role">${role}</div>
           <button class="btn sm block push-btn" style="margin-bottom:8px;display:none">${icon('phone',15)} הפעל התראות</button>
+          <button class="btn sm block pushtest-btn" style="margin-bottom:8px;display:none">בדיקת התראה</button>
           <button class="btn sm block" id="logout-btn2">${icon('logout',15)} התנתקות</button></div></div>
     </div>
   </div>`);
   $('#app').appendChild(shell);
   $('#logout-btn').onclick=logout; $('#logout-btn2').onclick=logout;
-  $$('.push-btn').forEach(b=>b.onclick=enablePush); refreshPushButtons();
+  $$('.push-btn').forEach(b=>b.onclick=enablePush);
+  $$('.pushtest-btn').forEach(b=>b.onclick=testPush);
+  refreshPushButtons();
   // מדריך למשתמש — נפתח כחלון פנימי עם כפתור סגירה (לא כטאב שכולא)
   $$('.nav-ext').forEach(a=>a.addEventListener('click',e=>{e.preventDefault();openGuideViewer();}));
   const drawer=$('#drawer');
@@ -443,12 +447,29 @@ function urlB64ToUint8(base64){
   return arr;
 }
 async function refreshPushButtons(){
-  const btns=$$('.push-btn'); if(!btns.length) return;
-  if(!pushSupported() || !hasVapid()){ btns.forEach(b=>b.style.display='none'); return; }
+  const btns=$$('.push-btn'); const tbtns=$$('.pushtest-btn');
+  if(!btns.length) return;
+  if(!pushSupported() || !hasVapid()){ btns.forEach(b=>b.style.display='none'); tbtns.forEach(b=>b.style.display='none'); return; }
   let subscribed=false;
   try{ const reg=await navigator.serviceWorker.ready; subscribed=!!(await reg.pushManager.getSubscription()); }catch(e){}
   const active = (Notification.permission==='granted' && subscribed);
   btns.forEach(b=>{ b.style.display=''; b.innerHTML=icon('phone',15)+(active?' התראות פעילות ✓':' הפעל התראות'); });
+  tbtns.forEach(b=>{ b.style.display = active ? '' : 'none'; }); // כפתור בדיקה רק אחרי הפעלה
+}
+/* בדיקת-אבחון: שולח התראה מהמכשיר לעצמו ומציג מה החזיר השרת */
+async function testPush(){
+  try{
+    if(!pushSupported()){ alert('המכשיר לא תומך בהתראות (אם זה אייפון — חובה לפתוח מהאייקון במסך הבית, לא מספארי)'); return; }
+    const reg=await navigator.serviceWorker.ready;
+    const sub=await reg.pushManager.getSubscription();
+    if(Notification.permission!=='granted' || !sub){ alert('ההרשאה לא פעילה. לחץ קודם "הפעל התראות" ואשר.'); return; }
+    const {data,error}=await sb.functions.invoke('push',{body:{event:'test'}});
+    if(error){ alert('השרת החזיר שגיאה: '+(error.message||JSON.stringify(error))); return; }
+    const d=data||{};
+    if(d.sent>0){ alert('✅ השרת שלח את ההתראה ('+d.sent+'). אם היא לא מופיעה — הבעיה בהגדרות ההתראות של המכשיר/אפל.'); }
+    else if(d.subsFound===0){ alert('⚠️ אין מנוי שמור בשרת. לחץ "הפעל התראות" שוב (ייתכן שהרישום לא נשמר).'); }
+    else { alert('⚠️ נמצא מנוי אבל השליחה נכשלה. פרטים: '+JSON.stringify(d.errors||d)); }
+  }catch(e){ alert('שגיאה בקריאה לשרת: '+(e.message||e)); }
 }
 async function enablePush(){
   if(!pushSupported()){ toast('הדפדפן לא תומך בהתראות דחיפה','err'); return; }
