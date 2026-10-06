@@ -71,15 +71,17 @@ self.addEventListener('fetch', e => {
   );
 });
 
-/* מטפל התראות דחיפה — מוכן לשימוש עתידי (כשייבנה שרת הדחיפה) */
+/* מטפל התראות דחיפה — מציג הודעה גם כשהאפליקציה סגורה */
 self.addEventListener('push', e => {
   let data = {};
   try { data = e.data ? e.data.json() : {}; } catch (_) { data = { body: e.data && e.data.text() }; }
   const title = data.title || 'פורטל שירות ותיקונים';
   const options = {
     body: data.body || '',
-    icon: data.icon || './',
-    badge: data.badge,
+    icon: data.icon || './apple-touch-icon.png',
+    badge: data.badge || './apple-touch-icon.png',
+    tag: data.tag || undefined,            // התראות על אותה קריאה מתאחדות
+    renotify: !!data.tag,
     data: { url: data.url || './' },
     dir: 'rtl', lang: 'he'
   };
@@ -87,9 +89,14 @@ self.addEventListener('push', e => {
 });
 self.addEventListener('notificationclick', e => {
   e.notification.close();
-  const url = (e.notification.data && e.notification.data.url) || './';
-  e.waitUntil(clients.matchAll({ type: 'window' }).then(list => {
-    for (const c of list) { if ('focus' in c) return c.focus(); }
-    if (clients.openWindow) return clients.openWindow(url);
+  const target = (e.notification.data && e.notification.data.url) || './';
+  e.waitUntil(clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
+    for (const c of list) {
+      if ('focus' in c) {
+        if ('navigate' in c && target && target !== './') { try { c.navigate(target); } catch (_) {} }
+        return c.focus();
+      }
+    }
+    if (clients.openWindow) return clients.openWindow(target);
   }));
 });

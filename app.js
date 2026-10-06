@@ -310,6 +310,7 @@ function renderShell(){
         <div><b>פורטל שירות ותיקונים</b><br><span>עץ האורן</span></div></div>
       <nav class="nav">${nav}</nav>
       <div class="side-foot"><div class="who">${who}</div><div class="role">${role}</div>
+        <button class="btn sm block push-btn" style="margin-bottom:8px;display:none">${icon('phone',15)} הפעל התראות</button>
         <button class="btn sm block" id="logout-btn">${icon('logout',15)} התנתקות</button></div>
     </aside>
     <div class="main">
@@ -324,11 +325,13 @@ function renderShell(){
         <div><b>פורטל שירות ותיקונים</b><br><span>עץ האורן</span></div></div>
         <nav class="nav">${nav}</nav>
         <div class="side-foot"><div class="who">${who}</div><div class="role">${role}</div>
+          <button class="btn sm block push-btn" style="margin-bottom:8px;display:none">${icon('phone',15)} הפעל התראות</button>
           <button class="btn sm block" id="logout-btn2">${icon('logout',15)} התנתקות</button></div></div>
     </div>
   </div>`);
   $('#app').appendChild(shell);
   $('#logout-btn').onclick=logout; $('#logout-btn2').onclick=logout;
+  $$('.push-btn').forEach(b=>b.onclick=enablePush); refreshPushButtons();
   // מדריך למשתמש — נפתח כחלון פנימי עם כפתור סגירה (לא כטאב שכולא)
   $$('.nav-ext').forEach(a=>a.addEventListener('click',e=>{e.preventDefault();openGuideViewer();}));
   const drawer=$('#drawer');
@@ -427,6 +430,49 @@ function onRealtime(payload){
     }
   }, 400);
 }
+/* ============================================================
+   התראות דחיפה לטלפון (Web Push) — עובדות גם כשהאפליקציה סגורה
+   ============================================================ */
+function pushSupported(){ return ('serviceWorker' in navigator) && ('PushManager' in window) && ('Notification' in window); }
+function hasVapid(){ return typeof VAPID_PUBLIC!=='undefined' && VAPID_PUBLIC; }
+function urlB64ToUint8(base64){
+  const pad='='.repeat((4-base64.length%4)%4);
+  const b=(base64+pad).replace(/-/g,'+').replace(/_/g,'/');
+  const raw=atob(b); const arr=new Uint8Array(raw.length);
+  for(let i=0;i<raw.length;i++) arr[i]=raw.charCodeAt(i);
+  return arr;
+}
+async function refreshPushButtons(){
+  const btns=$$('.push-btn'); if(!btns.length) return;
+  if(!pushSupported() || !hasVapid()){ btns.forEach(b=>b.style.display='none'); return; }
+  let subscribed=false;
+  try{ const reg=await navigator.serviceWorker.ready; subscribed=!!(await reg.pushManager.getSubscription()); }catch(e){}
+  const active = (Notification.permission==='granted' && subscribed);
+  btns.forEach(b=>{ b.style.display=''; b.innerHTML=icon('phone',15)+(active?' התראות פעילות ✓':' הפעל התראות'); });
+}
+async function enablePush(){
+  if(!pushSupported()){ toast('הדפדפן לא תומך בהתראות דחיפה','err'); return; }
+  if(!hasVapid()){ toast('התראות הדחיפה עדיין לא הוגדרו במערכת','err'); return; }
+  try{
+    const perm=await Notification.requestPermission();
+    if(perm!=='granted'){ toast('ההתראות חסומות. ניתן לאשר אותן בהגדרות הדפדפן','err'); return; }
+    const reg=await navigator.serviceWorker.ready;
+    let sub=await reg.pushManager.getSubscription();
+    if(!sub) sub=await reg.pushManager.subscribe({userVisibleOnly:true, applicationServerKey:urlB64ToUint8(VAPID_PUBLIC)});
+    const j=sub.toJSON();
+    const {error}=await sb.from('push_subscriptions').upsert(
+      {user_id:State.profile.id, endpoint:sub.endpoint, p256dh:j.keys.p256dh, auth:j.keys.auth, user_agent:navigator.userAgent},
+      {onConflict:'endpoint'});
+    if(error) throw error;
+    toast('🔔 התראות הופעלו! תקבל עדכונים גם כשהאפליקציה סגורה','ok');
+    refreshPushButtons();
+  }catch(e){ console.error(e); toast('לא הצלחנו להפעיל התראות: '+(e.message||''),'err'); }
+}
+/* שליחת התראה לצד השני דרך פונקציית השרת (לא חוסם — נשלח ברקע) */
+function notifyPush(payload){
+  try{ sb.functions.invoke('push', {body:payload}).catch(()=>{}); }catch(e){}
+}
+
 /* רינדור מיידי מהמטמון + רענון שקט ברקע (stale-while-revalidate) */
 function dataView(build){
   const token=_routeToken;
@@ -964,6 +1010,7 @@ async function submitRequest(data,files){
       if(!eu) await sb.from('attachments').insert({request_id:req.id,store_id,storage_path:path,file_name:f.name,mime_type:f.type,size_bytes:f.size,uploaded_by:State.profile.id});
     }
     toast('הקריאה נפתחה: '+req.request_no,'ok');
+    notifyPush({event:'new', req_id:req.id, request_no:req.request_no, store_id, stage:req.stage, actor_id:State.profile.id});
     invalidateReqCache();
     location.hash='#/requests/id/'+req.id;
   }catch(err){ console.error(err); toast('שגיאה בפתיחת הקריאה: '+(err.message||''),'err'); btn.disabled=false;btn.textContent='שליחת הקריאה'; }
@@ -1069,6 +1116,7 @@ async function changeStage(r,toStage,note,result,onDone){
   invalidateReqCache();
   sb.from('status_history').insert({request_id:r.id,store_id:r.store_id,from_stage:r.stage,to_stage:toStage,note:note||null,changed_by:State.profile.id}).then(()=>{});
   sb.from('audit_log').insert({actor_id:State.profile.id,store_id:r.store_id,entity:'service_request',entity_id:r.id,action:'status_change',details:{from:r.stage,to:toStage}}).then(()=>{});
+  notifyPush({event:'stage', req_id:r.id, request_no:r.request_no, store_id:r.store_id, stage:toStage, actor_id:State.profile.id});
   toast('הסטטוס עודכן','ok'); if(onDone)onDone(); return true;
 }
 
@@ -1204,6 +1252,7 @@ async function setAlert(r,text){
   try{ await withRetry(()=>sb.from('service_requests').update({alert_text:text}).eq('id',r.id)); }
   catch(e){ toast('החיבור איטי — נסה שוב','err'); return; }
   invalidateReqCache();
+  if(text) notifyPush({event:'alert', req_id:r.id, request_no:r.request_no, store_id:r.store_id, alert_text:text, actor_id:State.profile.id});
   toast(text?'ההתראה נשלחה לחנות':'ההתראה הוסרה','ok');
   viewRequestDetail(r.id);
 }
