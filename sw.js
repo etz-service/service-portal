@@ -1,7 +1,7 @@
 /* Service Worker — פורטל שירות ותיקונים עץ האורן
    נותן: טעינה מיידית (app shell במטמון) + עבודה ברשת חלשה/אופליין.
    עדכן את המספר כדי לאלץ רענון מטמון בכל גרסה חדשה. */
-const CACHE = 'etz-service-v1';
+const CACHE = 'etz-service-v3';
 const SHELL = [
   './',
   './index.html',
@@ -37,7 +37,26 @@ self.addEventListener('fetch', e => {
     return;
   }
 
-  // קבצי האפליקציה — stale-while-revalidate: מגיש מיד מהמטמון, מרענן ברקע
+  // קבצי הליבה (HTML/JS) — רשת-תחילה: עדכונים מופיעים מיד; המטמון הוא גיבוי לאופליין בלבד
+  const isShell = url.origin === self.location.origin && (
+    req.mode === 'navigate' ||
+    url.pathname === '/' || url.pathname.endsWith('/') ||
+    /\/(index\.html|app\.js|sw\.js)(\?|$)/.test(url.pathname)
+  );
+  if (isShell) {
+    e.respondWith(
+      fetch(req).then(res => {
+        if (res && res.status === 200) {
+          const copy = res.clone();
+          caches.open(CACHE).then(c => c.put(req, copy)).catch(() => {});
+        }
+        return res;
+      }).catch(() => caches.match(req).then(c => c || caches.match('./index.html')))
+    );
+    return;
+  }
+
+  // שאר הקבצים (PDF, ספריות CDN) — stale-while-revalidate: מגיש מיד, מרענן ברקע
   e.respondWith(
     caches.match(req).then(cached => {
       const network = fetch(req).then(res => {

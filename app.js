@@ -993,7 +993,7 @@ async function viewRequestDetail(id){
         <div class="section-title">פרטי הלקוח</div>
         <dl class="kv">
           <dt>שם</dt><dd>${esc(r.customers.full_name)}</dd>
-          <dt>טלפון</dt><dd class="mono">${esc(r.customers.phone)}${r.customers.phone_alt?' / '+esc(r.customers.phone_alt):''}</dd>
+          <dt>טלפון</dt><dd class="mono"><a href="tel:${telDial(r.customers.phone)}" style="color:var(--accent);text-decoration:none">${esc(r.customers.phone)}</a>${r.customers.phone_alt?' / <a href="tel:'+telDial(r.customers.phone_alt)+'" style="color:var(--accent);text-decoration:none">'+esc(r.customers.phone_alt)+'</a>':''}</dd>
           <dt>כתובת</dt><dd>${esc([r.customers.city,r.customers.street,r.customers.house_no,r.customers.apartment].filter(Boolean).join(' '))||'—'}</dd>
         </dl>
         <div class="section-title">פרטי הכלי</div>
@@ -1066,6 +1066,8 @@ function waPhone(r){
   return ph;
 }
 function waSignature(r){ return `\n\nבברכה,\n${r.stores?.name||''}`; }
+/* מספר לחיוג ישיר (tel:) — ממיר לפורמט בינלאומי +972 שעובד מכל מכשיר */
+function telDial(ph){ let d=(ph||'').replace(/\D/g,''); if(!d)return ''; if(d.startsWith('0'))d='972'+d.slice(1); else if(!d.startsWith('972'))d='972'+d; return '+'+d; }
 function toolLabel(r){
   // סוג הכלי + מותג + דגם — למשל: "מברגה Makita HP488"
   return [r.tools?.category, r.tools?.brand, r.tools?.model].filter(Boolean).join(' ').trim();
@@ -1114,9 +1116,15 @@ function actionPanel(r,rd){
     }
   }
 
+  // כפתור חיוג ישיר ללקוח
+  if(r.customers?.phone){
+    const call=el(`<a class="btn block" href="tel:${telDial(r.customers.phone)}" style="margin-top:2px;background:#0f766e;border-color:#0f766e;color:#fff">${icon('phone',17)} התקשר ללקוח</a>`);
+    p.appendChild(call);
+  }
+
   // כפתורי וואטסאפ ללקוח
   if(r.customers?.phone){
-    const wa=el(`<a class="btn wa block" href="${waLink(r)}" target="_blank" rel="noopener" style="margin-top:2px">${icon('whatsapp',17)} עדכון ללקוח בוואטסאפ</a>`);
+    const wa=el(`<a class="btn wa block" href="${waLink(r)}" target="_blank" rel="noopener" style="margin-top:8px">${icon('whatsapp',17)} עדכון ללקוח בוואטסאפ</a>`);
     p.appendChild(wa);
     const waR=el(`<button class="btn block" style="margin-top:8px;border-color:var(--wa);color:var(--wa)">${icon('whatsapp',16)} שליחת אישור קליטה בוואטסאפ</button>`);
     waR.onclick=()=>sendIntakeWhatsapp(r,waR);
@@ -1898,6 +1906,7 @@ function icon(name,s=18){const p={
   help:'<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 015 0c0 1.5-2 2-2.5 3.5M12 17h.01"/>',
   flag:'<path d="M5 21V4M5 4h11l-2 4 2 4H5"/>',
   print:'<path d="M6 9V3h12v6M6 18H4a1 1 0 01-1-1v-5a2 2 0 012-2h14a2 2 0 012 2v5a1 1 0 01-1 1h-2M7 14h10v7H7z"/>',
+  phone:'<path d="M6.6 10.8a15 15 0 006.6 6.6l2.2-2.2a1 1 0 011-.24 11 11 0 003.5.56 1 1 0 011 1V20a1 1 0 01-1 1A17 17 0 013 4a1 1 0 011-1h3.5a1 1 0 011 1 11 11 0 00.56 3.5 1 1 0 01-.24 1z"/>',
 }[name]||'';
   return `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;}
 
