@@ -6,16 +6,28 @@ const APP_LOGO="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEgAAABICAIAAADajy
    פותר את שגיאות "Load failed" של Safari, שנגרמות כשהדפדפן סוגר חיבור
    ומנסה להשתמש בו שוב. עוטף את כל התקשורת ברמה הנמוכה ביותר. */
 async function resilientFetch(input, init){
-  const tries=4;
+  init = init || {};
+  const url = (typeof input==='string') ? input : (input && (input.url||input.href)) || String(input||'');
+  const isUpload = /\/storage\/v1\//.test(url);       // העלאת/הורדת קבצים — זמן ארוך, בלי קטיעה מוקדמת
+  const LIMIT = isUpload ? 60000 : 8000;              // תקרת זמן לכל ניסיון (מונע "תקיעה לנצח")
+  const tries = 2;                                    // ניסיון + ניסיון חוזר אחד (מספיק ל-Load failed זמני)
+  const outer = init.signal;                          // אם הקורא ביקש לבטל (ניווט/יציאה) — נכבד זאת
   let lastErr;
   for(let i=0;i<tries;i++){
+    const ac = new AbortController();
+    const onOuterAbort = ()=>ac.abort();
+    if(outer){ if(outer.aborted) ac.abort(); else outer.addEventListener('abort', onOuterAbort, {once:true}); }
+    const timer = setTimeout(()=>ac.abort(), LIMIT);
     try{
-      const res=await fetch(input, init);
+      const res = await fetch(input, {...init, signal: ac.signal});
+      clearTimeout(timer); if(outer) outer.removeEventListener('abort', onOuterAbort);
       return res;
     }catch(e){
+      clearTimeout(timer); if(outer) outer.removeEventListener('abort', onOuterAbort);
       lastErr=e;
-      // שגיאת רשת (Load failed / Failed to fetch) — נסה שוב אחרי השהיה קצרה
-      if(i<tries-1){ await new Promise(r=>setTimeout(r, 300*(i+1))); continue; }
+      if(outer && outer.aborted) throw e;             // ביטול יזום של הקורא — לא מנסים שוב
+      // שגיאת רשת / פסק-זמן — ניסיון נוסף אחרי השהיה קצרה
+      if(i<tries-1){ await new Promise(r=>setTimeout(r, 300)); continue; }
       throw e;
     }
   }
@@ -32,20 +44,19 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
    מנסה שוב עד 3 פעמים עם השהיה גוברת. פותר את רוב ה"נפילות" מול השרת המרוחק. */
 function isNetErr(e){
   const m=((e&&(e.message||e.error_description||e.msg))||'').toString().toLowerCase();
-  return m.includes('load failed')||m.includes('failed to fetch')||m.includes('networkerror')||m.includes('timeout')||m.includes('fetch');
+  return m.includes('load failed')||m.includes('failed to fetch')||m.includes('networkerror')||m.includes('timeout')||m.includes('abort')||m.includes('fetch');
 }
-async function withRetry(fn,tries=3){
+async function withRetry(fn,tries=2){
+  // הערה: ניסיונות חוזרים ברמת הרשת (כולל פסק-זמן) מטופלים כבר ב-resilientFetch.
+  // כאן מטפלים רק בתגובת {error} רשתית נדירה — בלי להכפיל המתנות.
   let lastErr;
   for(let i=0;i<tries;i++){
     try{
       const res=await fn();
-      // Supabase מחזיר {data,error} — שגיאת רשת מופיעה כ-error
-      if(res&&res.error&&isNetErr(res.error)&&i<tries-1){ await sleep(400*(i+1)); continue; }
+      if(res&&res.error&&isNetErr(res.error)&&i<tries-1){ await sleep(300); continue; }
       return res;
     }catch(e){
-      lastErr=e;
-      if(isNetErr(e)&&i<tries-1){ await sleep(400*(i+1)); continue; }
-      throw e;
+      throw e; // שגיאת רשת כבר עברה ניסיון חוזר בשכבה התחתונה
     }
   }
   throw lastErr;

@@ -200,7 +200,7 @@ h1,h2,h3{margin:0;font-weight:700;letter-spacing:-.015em;color:var(--ink)}
   .drawer.open{display:block}
   .drawer .scrim{position:absolute;inset:0;background:rgba(10,12,22,.5);backdrop-filter:blur(2px);animation:fade .2s}
   .drawer .panel{position:absolute;inset-inline-end:0;top:0;bottom:0;width:274px;background:var(--steel);display:flex;flex-direction:column;animation:slide .22s cubic-bezier(.4,0,.2,1);padding-top:env(safe-area-inset-top,0px)}
-  @keyframes slide{from{transform:translateX(100%)}to{transform:translateX(0)}}
+  @keyframes slide{from{transform:translateX(-100%)}to{transform:translateX(0)}}
   @keyframes fade{from{opacity:0}to{opacity:1}}
 }
 
@@ -408,9 +408,9 @@ a.chip:hover{transform:translateY(-1px)}
 /* --- מגירת מובייל: החלקה טבעית --- */
 @media(max-width:860px){
   .drawer .panel{animation:drawerIn .32s var(--ease-out)}
-  @keyframes drawerIn{from{transform:translateX(100%)}to{transform:translateX(0)}}
+  @keyframes drawerIn{from{transform:translateX(-100%)}to{transform:translateX(0)}}
   .drawer.closing .panel{animation:drawerOut .24s cubic-bezier(.4,0,1,1) both}
-  @keyframes drawerOut{to{transform:translateX(100%)}}
+  @keyframes drawerOut{to{transform:translateX(-100%)}}
   .drawer.closing .scrim{animation:fadeOut .24s both}
   .drawer .scrim{animation:fade .26s var(--ease-io)}
   .drawer .nav a{animation:riseIn .3s var(--ease-out) both}
