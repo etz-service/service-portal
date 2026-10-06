@@ -566,6 +566,7 @@ async function stageListView(title,sub,stages,showQuick,withStoreFilter,note){
     if(withStoreFilter && _stageFilterStore) list=list.filter(r=>r.store_id===_stageFilterStore);
     holder.innerHTML=''; holder.appendChild(requestsList2(list,isAdmin(),showQuick));
     const cnt=$('#sl-count'); if(cnt)cnt.textContent=list.length+' קריאות';
+    equalizeQA(holder);
   }
   dataView(paint);
   _liveRefresh=()=>{ if(document.getElementById('sl-holder')) paint(cachedRequests()||[]); };
@@ -655,6 +656,7 @@ async function requestsList(){
     });
     holder.innerHTML=''; holder.appendChild(requestsList2(list,isAdmin(),true,isAdmin()));
     _onSelChange();
+    equalizeQA(holder);
   }
   dataView(apply);              // רינדור מיידי + רענון ברקע
   _liveRefresh=()=>{ if(document.getElementById('req-holder')) apply(); };
@@ -674,7 +676,7 @@ function isMobile(){ return window.matchMedia('(max-width:860px)').matches; }
 function quickActionBtn(r,onDone){
   const flow=FLOW[r.stage]; if(!flow) return null;
   if(!(isAdmin()||flow.by==='store')) return null;
-  const b=el(`<button class="btn primary sm">${esc(flow.label)}</button>`);
+  const b=el(`<button class="btn primary sm qa-btn">${esc(flow.label)}</button>`);
   b.onclick=async(e)=>{
     e.stopPropagation();
     if(flow.special==='deliver'){ deliveryFlow(r); return; }
@@ -683,6 +685,18 @@ function quickActionBtn(r,onDone){
     await changeStage(r,flow.next,null,null,onDone||(()=>route()));
   };
   return b;
+}
+
+/* משווה את רוחב כל כפתורי הפעולה המהירה ברשימה לרוחב הגדול ביותר (המלל נשאר בגודלו) */
+function equalizeQA(scope){
+  const btns=[...(scope||document).querySelectorAll('.qa-btn')];
+  btns.forEach(b=>{ b.style.width=''; });
+  if(btns.length<2) return;
+  requestAnimationFrame(()=>{
+    let max=0; btns.forEach(b=>{ if(b.offsetWidth>max) max=b.offsetWidth; });
+    const avail=(scope&&scope.clientWidth)||document.documentElement.clientWidth||9999;
+    btns.forEach(b=>{ b.style.width=(max>0&&max<=avail)?(max+'px'):'100%'; });
+  });
 }
 
 /* מצב בחירה למחיקה מרובה (ספק בלבד) */
