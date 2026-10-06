@@ -243,10 +243,10 @@ async function logout(){ try{ if(_rtChannel){sb.removeChannel(_rtChannel);_rtCha
 function navItems(){
   if(isAdmin()) return [
     ['#/dash','לוח בקרה','gauge'],
+    ['#/requests','כל הקריאות','clipboard'],
     ['#/approve','אישור תיקונים','check'],
     ['#/intake','קליטה מחנות','inbox'],
     ['#/dispatch','שליחה לחנות','truck'],
-    ['#/requests','כל הקריאות','clipboard'],
     ['#/new','פתיחת קריאה','plus'],
     ['sep'],
     ['#/stores','חנויות','store'],
@@ -257,10 +257,10 @@ function navItems(){
   ];
   return [
     ['#/dash','לוח בקרה','gauge'],
+    ['#/requests','הקריאות שלי','clipboard'],
     ['#/new','פתיחת קריאה','plus'],
     ['#/send','שליחה לספק','truck'],
     ['#/receive','קליטה מספק','inbox'],
-    ['#/requests','הקריאות שלי','clipboard'],
     ['sep'],
     ['./madrich-oren.pdf','מדריך למשתמש','help'],
   ];
@@ -336,7 +336,7 @@ function setActiveNav(path){
 }
 
 /* ---------- מעברי מסך: החלקה מהצד לפי כיוון הניווט ---------- */
-const NAV_ORDER=['#/dash','#/approve','#/intake','#/dispatch','#/send','#/receive','#/new','#/requests','#/stores','#/users','#/reports'];
+const NAV_ORDER=['#/dash','#/requests','#/approve','#/intake','#/dispatch','#/send','#/receive','#/new','#/stores','#/users','#/reports'];
 let _prevBase=null;
 function navDirection(base){
   // כניסה לפרטי קריאה = "קדימה"; חזרה ממנה = "אחורה"
@@ -373,8 +373,33 @@ function subscribeRealtime(){
       .subscribe();
   }catch(e){ console.warn('realtime off',e); }
 }
+let _unseenCount=0;
+const _baseTitle=document.title;
+function bumpTitleBadge(){ _unseenCount++; document.title='('+_unseenCount+') '+_baseTitle; }
+window.addEventListener('focus',()=>{ _unseenCount=0; document.title=_baseTitle; });
+document.addEventListener('visibilitychange',()=>{ if(!document.hidden){ _unseenCount=0; document.title=_baseTitle; } });
+
 function onRealtime(payload){
   invalidateReqCache();
+  // התראה בתוך האפליקציה — על קריאה חדשה או שינוי סטטוס שרלוונטי למשתמש
+  try{
+    if(payload.table==='service_requests'){
+      const n=payload.new||{}, o=payload.old||{};
+      const mine = isAdmin() || n.store_id===State.profile.store_id || o.store_id===State.profile.store_id;
+      if(mine){
+        if(payload.eventType==='INSERT'){
+          toast('🔔 קריאה חדשה נפתחה'+(n.request_no?' · '+n.request_no:''),'ok');
+          if(document.hidden) bumpTitleBadge();
+        } else if(payload.eventType==='UPDATE' && n.stage && o.stage && n.stage!==o.stage){
+          toast('🔔 עדכון סטטוס'+(n.request_no?' · '+n.request_no:'')+': '+(stageLabel(n.stage)),'');
+          if(document.hidden) bumpTitleBadge();
+        } else if(payload.eventType==='UPDATE' && n.alert_text && n.alert_text!==o.alert_text){
+          toast('🚩 התקבלה התראה חדשה'+(n.request_no?' · '+n.request_no:''),'err');
+          if(document.hidden) bumpTitleBadge();
+        }
+      }
+    }
+  }catch(e){}
   clearTimeout(_rtTimer);
   _rtTimer=setTimeout(async ()=>{
     await fetchRequests().catch(()=>{});
@@ -924,15 +949,16 @@ async function submitRequest(data,files){
    ============================================================ */
 async function viewRequestDetail(id){
   const c=$('#content');
-  const {data:r,error}=await sb.from('service_requests')
-    .select('*, customers(*), tools(*), stores(name), repair_details(*)')
-    .eq('id',id).single();
-  if(error||!r){c.innerHTML=errBox(error||{message:'קריאה לא נמצאה'});return;}
-  const [hist,comments,atts]=await Promise.all([
+  // כל השאילתות במקביל — סבב רשת אחד במקום שניים
+  const [reqRes,histRes,commRes,attRes]=await Promise.all([
+    sb.from('service_requests').select('*, customers(*), tools(*), stores(name), repair_details(*)').eq('id',id).single(),
     sb.from('status_history').select('*, profiles(full_name)').eq('request_id',id).order('created_at',{ascending:true}),
     sb.from('comments').select('*, profiles(full_name)').eq('request_id',id).order('created_at',{ascending:true}),
     sb.from('attachments').select('*').eq('request_id',id).order('created_at',{ascending:true}),
   ]);
+  const r=reqRes.data, error=reqRes.error;
+  if(error||!r){c.innerHTML=errBox(error||{message:'קריאה לא נמצאה'});return;}
+  const hist=histRes, comments=commRes, atts=attRes;
   const rd=r.repair_details?.[0];
   c.innerHTML=pageHead('קריאה '+r.request_no, (r.stores?.name||''),
     `<div class="row" style="gap:8px">${isAdmin()?`<button class="btn" id="alert-btn">${icon('flag',15)} התראה לחנות</button>`:''}<button class="btn" id="edit-req">${icon('wrench',15)} עריכת פרטים</button><button class="btn" id="intake-pdf">${icon('print',15)} אישור קליטה</button><a href="#/requests" class="btn ghost">${icon('back',16)} חזרה</a></div>`);
@@ -1447,10 +1473,29 @@ function buildIntakeHTML(r){
   </div>
   <script>setTimeout(()=>window.print(),500)<\/script></body></html>`;
 }
+function showReceiptOverlay(html,title){
+  const ov=el(`<div class="guide-ov">
+    <div class="guide-bar">
+      <b>${esc(title||'אישור')}</b>
+      <span style="flex:1"></span>
+      <button class="btn sm" id="rc-print">${icon('print',15)} הדפסה</button>
+      <button class="btn sm" id="rc-close">✕ סגירה</button>
+    </div>
+    <iframe class="guide-frame" id="rc-frame"></iframe>
+  </div>`);
+  document.body.appendChild(ov);
+  const frame=ov.querySelector('#rc-frame');
+  frame.srcdoc=html;
+  ov.querySelector('#rc-close').onclick=()=>ov.remove();
+  ov.querySelector('#rc-print').onclick=()=>{ try{ frame.contentWindow.focus(); frame.contentWindow.print(); }catch(e){} };
+  const onKey=e=>{ if(e.key==='Escape'){ ov.remove(); document.removeEventListener('keydown',onKey);} };
+  document.addEventListener('keydown',onKey);
+}
 function printIntakeReceipt(r){
-  const w=window.open('','_blank');
-  w.document.write(buildIntakeHTML(r));
-  w.document.close();
+  showReceiptOverlay(buildIntakeHTML(r), 'אישור קליטה · '+r.request_no);
+}
+function printDeliveryReceipt(r,f,signedText,sigDataUrl){
+  showReceiptOverlay(buildReceiptHTML(r,f,signedText,sigDataUrl,false), 'אישור מסירה · '+r.request_no);
 }
 
 /* שליחת אישור קליטה ללקוח בוואטסאפ — מייצר תמונת PNG (נפתחת נכון בכל מקום) */
@@ -1461,16 +1506,18 @@ async function sendIntakeWhatsapp(r,btn){
   try{
     const blob=await renderIntakePNG(r);
     let url=null;
-    // ניסיון 1: bucket ציבורי — קישור קצר
+    const fname=`intake_${Date.now()}.png`;
+    // ניסיון 1: bucket ציבורי — קישור קצר ונקי
     try{
-      const path=`${r.store_id}/${r.id}/intake_${Date.now()}.png`;
-      const {error}=await sb.storage.from(RECEIPTS_BUCKET).upload(path,blob,{contentType:'image/png',upsert:true});
-      if(!error){ url=sb.storage.from(RECEIPTS_BUCKET).getPublicUrl(path).data.publicUrl; }
-    }catch(e){ /* נמשיך לגיבוי */ }
-    // ניסיון 2 (גיבוי): bucket פרטי + קישור חתום — תמיד עובד
+      const path=`${r.store_id}/${r.id}/${fname}`;
+      const up=await sb.storage.from(RECEIPTS_BUCKET).upload(path,blob,{contentType:'image/png'});
+      if(!up.error){ url=sb.storage.from(RECEIPTS_BUCKET).getPublicUrl(path).data.publicUrl; }
+      else { console.warn('receipts upload failed:',up.error.message); }
+    }catch(e){ console.warn('receipts err',e); }
+    // ניסיון 2 (גיבוי): bucket פרטי + קישור חתום
     if(!url){
-      const path=`${r.store_id}/${r.id}/intake_${Date.now()}.png`;
-      const {error}=await sb.storage.from(STORAGE_BUCKET).upload(path,blob,{contentType:'image/png',upsert:true});
+      const path=`${r.store_id}/${r.id}/${fname}`;
+      const {error}=await sb.storage.from(STORAGE_BUCKET).upload(path,blob,{contentType:'image/png'});
       if(error) throw error;
       const {data}=await sb.storage.from(STORAGE_BUCKET).createSignedUrl(path,60*60*24*365);
       url=data?.signedUrl;
@@ -1640,12 +1687,6 @@ function buildReceiptHTML(r,f,signedText,sigDataUrl,forPrint){
   </div>
   ${forPrint?'<script>setTimeout(()=>window.print(),500)<\/script>':''}</body></html>`;
 }
-function printDeliveryReceipt(r,f,signedText,sigDataUrl){
-  const w=window.open('','_blank');
-  w.document.write(buildReceiptHTML(r,f,signedText,sigDataUrl,true));
-  w.document.close();
-}
-
 /* ============================================================
    ניהול חנויות וסניפים (אדמין)
    ============================================================ */
