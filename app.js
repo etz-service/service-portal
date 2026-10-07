@@ -217,6 +217,8 @@ async function afterLogin(user){
   subscribeRealtime();
   // טעינה מקדימה ברקע — הניווט הבא יהיה מיידי
   loadRequests({}).catch(()=>{});
+  // פתיחה בולטת: הזמנה להפעיל התראות (אם עוד לא הופעלו)
+  setTimeout(()=>{ maybePromptPush().catch(()=>{}); }, 1200);
 }
 
 function renderLogin(){
@@ -492,6 +494,53 @@ async function enablePush(){
 /* שליחת התראה לצד השני דרך פונקציית השרת (לא חוסם — נשלח ברקע) */
 function notifyPush(payload){
   try{ sb.functions.invoke('push', {body:payload}).catch(()=>{}); }catch(e){}
+}
+
+/* ---------- פתיחה בולטת: הזמנה להפעיל התראות ---------- */
+function isStandalone(){ try{ return (navigator.standalone===true) || matchMedia('(display-mode: standalone)').matches; }catch(e){ return false; } }
+function isIOS(){ return /iphone|ipad|ipod/i.test(navigator.userAgent||'') || (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1); }
+function pushPromptSnoozed(){ try{ return (Date.now()-(+localStorage.getItem('pushPromptAt')||0)) < 7*86400000; }catch(e){ return false; } }
+function snoozePushPrompt(){ try{ localStorage.setItem('pushPromptAt', String(Date.now())); }catch(e){} }
+
+async function maybePromptPush(){
+  if(!hasVapid()) return;
+  // אייפון בספארי (עדיין לא מותקן) — קודם להתקין למסך הבית
+  if(isIOS() && !isStandalone()){
+    if(!pushPromptSnoozed()) showInstallPrompt();
+    return;
+  }
+  if(!pushSupported()) return;
+  if(Notification.permission!=='default') return;   // כבר אושר או נחסם
+  try{ const reg=await navigator.serviceWorker.ready; if(await reg.pushManager.getSubscription()) return; }catch(e){}
+  if(pushPromptSnoozed()) return;
+  showPushPrompt();
+}
+function showPushPrompt(){
+  const body=el(`<div style="text-align:center;padding:6px 2px 2px">
+    <div style="width:74px;height:74px;border-radius:21px;margin:2px auto 16px;background:linear-gradient(135deg,var(--accent),#7c3aed);display:grid;place-items:center;box-shadow:var(--sh-accent)"><span style="font-size:38px">🔔</span></div>
+    <h2 style="margin:0 0 10px;font-size:21px;letter-spacing:-.02em">הישארו מעודכנים מעץ האורן</h2>
+    <p style="margin:0;color:var(--ink-2);line-height:1.65;font-size:15px">הפעילו התראות כדי לקבל <b>מיד</b> עדכונים חשובים — קריאות חדשות, שינויי סטטוס והתראות — <b>גם כשהאפליקציה סגורה</b>.</p>
+    <p style="margin:10px 0 0;color:var(--muted);font-size:13px">ככה לא תפספסו שום עדכון. אפשר לבטל בכל רגע.</p></div>`);
+  const foot=el(`<div style="display:flex;flex-direction:column;gap:9px;width:100%">
+    <button class="btn primary block" id="pp-enable" style="font-size:15px;padding:12px">${icon('phone',17)} כן, הפעל התראות</button>
+    <button class="btn ghost block" id="pp-later">אחר כך</button></div>`);
+  const mod=openModal('', body, foot);
+  mod.el.querySelector('#pp-enable').onclick=async()=>{ mod.close(); await enablePush(); };
+  mod.el.querySelector('#pp-later').onclick=()=>{ snoozePushPrompt(); mod.close(); };
+}
+function showInstallPrompt(){
+  const body=el(`<div style="text-align:center;padding:6px 2px 2px">
+    <div style="width:74px;height:74px;border-radius:21px;margin:2px auto 16px;background:linear-gradient(135deg,var(--accent),#7c3aed);display:grid;place-items:center;box-shadow:var(--sh-accent)"><span style="font-size:38px">🔔</span></div>
+    <h2 style="margin:0 0 10px;font-size:20px;letter-spacing:-.02em">קבלו התראות מעץ האורן</h2>
+    <p style="margin:0;color:var(--ink-2);line-height:1.7;font-size:15px">כדי לקבל התראות באייפון יש להוסיף את האפליקציה למסך הבית:</p>
+    <ol style="text-align:right;margin:12px auto 0;max-width:300px;color:var(--ink-2);line-height:1.95;font-size:14.5px;padding-inline-start:20px">
+      <li>לחצו על כפתור <b>שיתוף</b> ⬆️ בתחתית ספארי</li>
+      <li>בחרו <b>"הוסף למסך הבית"</b></li>
+      <li>פתחו את האפליקציה <b>מהאייקון החדש</b></li>
+      <li>שם לחצו <b>"הפעל התראות"</b></li></ol></div>`);
+  const foot=el(`<div style="width:100%"><button class="btn primary block" id="ip-ok">הבנתי</button></div>`);
+  const mod=openModal('', body, foot);
+  mod.el.querySelector('#ip-ok').onclick=()=>{ snoozePushPrompt(); mod.close(); };
 }
 
 /* רינדור מיידי מהמטמון + רענון שקט ברקע (stale-while-revalidate) */
@@ -1381,9 +1430,9 @@ function commentsPanel(r,comments){
     || '<div class="small muted" style="padding:4px 0 8px">אין הערות עדיין</div>';
   const p=el(`<div class="card" style="min-width:0"><div class="card-h">הערות ותקשורת</div>
     <div class="pad"><div id="c-list">${list}</div>
-      <div style="margin-top:14px">
-        <textarea class="textarea" id="c-body" placeholder="כתיבת הערה..."></textarea>
-        ${admin?'<label class="internal-check"><input type="checkbox" id="c-internal"><span>הערה פנימית (לספק בלבד)</span></label>':'<div style="height:12px"></div>'}
+      <div class="comment-compose">
+        <textarea class="textarea" id="c-body" placeholder="כתיבת הערה..." aria-label="כתיבת הערה"></textarea>
+        ${admin?'<label class="internal-check"><input type="checkbox" id="c-internal"><span>הערה פנימית (לספק בלבד)</span></label>':''}
         <button class="btn primary block" id="c-send">שליחת הערה</button>
       </div></div></div>`);
   p.querySelector('#c-send').onclick=async()=>{

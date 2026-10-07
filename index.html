@@ -124,8 +124,12 @@ h1,h2,h3{margin:0;font-weight:700;letter-spacing:-.015em;color:var(--ink)}
 
 /* כרטיסים */
 .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:var(--sh-2);transition:box-shadow .2s var(--ease),transform .2s var(--ease)}
-.card.pad{padding:22px}
+.card.pad{padding:20px}
+/* גוף כרטיס אחיד — מרווח עקבי כך שהתוכן לעולם לא נצמד לקצוות */
+.pad{padding:20px}
 .card-h{padding:16px 20px;border-bottom:1px solid var(--hairline);font-weight:700;font-size:15px;letter-spacing:-.01em}
+.card-h+.pad{padding-top:18px}
+@media(max-width:860px){.card.pad,.pad{padding:16px}.card-h+.pad{padding-top:14px}}
 
 /* תגי סטטוס — פלטה מודרנית */
 .pill{display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border-radius:999px;
@@ -285,13 +289,17 @@ table.tbl{width:100%;border-collapse:collapse;font-size:14px;min-width:560px}
 .steps .s.done{background:var(--ok)}.steps .s.cur{background:var(--accent)}
 .step-label{font-size:13px;color:var(--muted);margin-bottom:18px;font-weight:500}
 
-/* ציר זמן */
-.timeline{position:relative;padding-inline-start:24px}
-.timeline::before{content:"";position:absolute;inset-inline-start:5px;top:6px;bottom:6px;width:2px;background:var(--line)}
-.tl-item{position:relative;padding-bottom:20px}
-.tl-item:last-child{padding-bottom:2px}
-.tl-item::before{content:"";position:absolute;inset-inline-start:-24px;top:3px;width:12px;height:12px;border-radius:50%;background:var(--accent);border:2.5px solid var(--surface);box-shadow:0 0 0 1.5px var(--accent-line)}
-.tl-item .t{font-size:12.5px;color:var(--muted);margin-top:1px}
+/* ציר זמן — נקודה לכל אירוע + קו מקשר בין אירועים (ללא קטע מיותר באחרון/יחיד) */
+.timeline{position:relative}
+.tl-item{position:relative;padding-inline-start:28px;padding-bottom:18px;min-height:14px}
+.tl-item:last-child{padding-bottom:0}
+.tl-item::before{content:"";position:absolute;inset-inline-start:0;top:4px;width:13px;height:13px;border-radius:50%;
+  background:var(--accent);border:2.5px solid var(--surface);box-shadow:0 0 0 1.5px var(--accent-line);z-index:1}
+.tl-item::after{content:"";position:absolute;inset-inline-start:5.5px;top:19px;bottom:-4px;width:2px;background:var(--line)}
+.tl-item:last-child::after{display:none}
+.tl-item>div:first-child{line-height:1.4}
+.tl-item .t{font-size:12.5px;color:var(--muted);margin-top:3px;overflow-wrap:anywhere}
+.tl-item .small{margin-top:4px;color:var(--ink-2);overflow-wrap:anywhere}
 
 .sig-pad{border:2px dashed var(--line-2);border-radius:var(--r);background:var(--surface-2);touch-action:none;width:100%;height:200px;display:block;cursor:crosshair}
 
@@ -481,8 +489,12 @@ details[open]>div{animation:riseIn .28s var(--ease-out) both}
 .comment-head b{font-size:14px}
 .comment-body{color:var(--ink-2);line-height:1.5;overflow-wrap:anywhere}
 .chip-internal{background:var(--danger-soft);border-color:#f0c0c0;color:#a13030;padding:2px 9px;font-size:11px}
-.internal-check{display:flex;align-items:center;gap:9px;margin:12px 2px;font-size:13px;color:var(--ink-2);cursor:pointer}
-.internal-check input{width:16px;height:16px;flex:none}
+.internal-check{display:flex;align-items:flex-start;gap:9px;margin:12px 0;font-size:13px;color:var(--ink-2);cursor:pointer;line-height:1.4}
+.internal-check input{width:16px;height:16px;flex:none;margin-top:1px}
+/* אזור כתיבת הערה — מרווחים עקביים בין שדה, סימון וכפתור */
+.comment-compose{margin-top:16px;display:flex;flex-direction:column;gap:12px}
+.comment-compose .textarea{margin:0}
+.comment-compose .internal-check{margin:0}
 .filterbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:18px}
 .filterbar .input,.filterbar .select{min-height:42px}
 
